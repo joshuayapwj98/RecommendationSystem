@@ -1,20 +1,37 @@
 import numpy as np
 import torch
 
+from model import ExtendedMF
+
 # TODO: design a metric to evaluate the model
 # Write a evalution for the diversity
-def evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag):
+def evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict):
 	recommends = []
 	for i in range(len(top_k)):
 		recommends.append([])
 
 	with torch.no_grad():
+		category_array, visual_array = None, None
+		if isinstance(model, ExtendedMF):
+			category_array = np.array([category_dict[i] for i in range(len(category_dict))])
+			category_tensor = torch.tensor(category_array).to(args.device)
+
+			visual_array = np.array([visual_dict[i] for i in range(len(visual_dict))])
+			visual_tensor = torch.tensor(visual_array).to(args.device)
+
 		pred_list_all = []
 		for i in gt_dict.keys(): # for each user
 			if len(gt_dict[i]) != 0: # if 
 				user = torch.full((item_num,), i, dtype=torch.int64).to(args.device) # create n_item users for prediction
 				item = torch.arange(0, item_num, dtype=torch.int64).to(args.device) 
-				prediction = model(user, item)
+
+				if isinstance(model, ExtendedMF):
+					category = category_tensor[item]
+					visual = visual_tensor[item]
+					prediction = model(user, item, category, visual)
+				else:
+					prediction = model(user, item)
+					
 				prediction = prediction.detach().cpu().numpy().tolist()
 				for j in train_dict[i]: # mask train
 					prediction[j] -= float('inf')
@@ -30,9 +47,9 @@ def evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag
 			recommends[idx].extend(indices.tolist())
 	return recommends
 
-def metrics(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag):
+def metrics(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict):
 	RECALL, NDCG = [], []
-	recommends = evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag)
+	recommends = evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict)
 
 	for idx in range(len(top_k)):
 		sumForRecall, sumForNDCG, user_length = 0, 0, 0

@@ -39,11 +39,16 @@ class MF(nn.Module):
 # TODO: Create new model class
 # Must have: __init__, forward functions
 class ExtendedMF(MF):
-    def __init__(self, num_users, num_items, embedding_size=8, dropout=0, mean=0, num_categories=0, category_embedding_size=8):
+    def __init__(self, num_users, num_items, embedding_size=8, dropout=0, mean=0, category_dict = None, visual_dict = None):
         super(ExtendedMF, self).__init__(num_users, num_items, embedding_size, dropout, mean)
         
+        assert category_dict is not None and visual_dict is not None # dictionaries must not be empty
+
+        self.category_dict = category_dict
+        self.visual_dict = visual_dict
+
         # Embedding layers for categorical features
-        self.category_emb = nn.Embedding(num_categories, category_embedding_size)
+        self.category_emb = nn.Embedding(num_items, embedding_size)
        
         # Linear layer for visual features
         self.visual_linear = nn.Linear(512, embedding_size)
@@ -52,19 +57,20 @@ class ExtendedMF(MF):
         self.category_emb.weight.data.uniform_(0, 0.005)
         self.visual_linear.weight.data.uniform_(0, 0.005)
 
-    def forward(self, u_id, i_id, visual_feature, category_feature):
+    def forward(self, u_id, i_id, category, visual):
         U = self.user_emb(u_id)
         b_u = self.user_bias(u_id).squeeze()
         I = self.item_emb(i_id)
         b_i = self.item_bias(i_id).squeeze()
         
-        # Get category embedding
-        C = self.category_emb(category_feature)
+        # Get category and visual features for the item
+        category_feature = self.category_emb(category.long())
+        visual_feature = self.visual_linear(visual.float())
+
+        # Combine item embedding with category and visual features
+        I_combined = I + category_feature + visual_feature
         
-        # Get visual feature embedding
-        V = self.visual_linear(visual_feature)
-        
-        # Concatenate item embedding with category and visual feature embeddings
-        I = torch.cat((I, C, V), dim=1)
-        
-        return self.dropout((U * I).sum(1) + b_u + b_i + self.mean)
+        # Prediction score for the user-item pair
+        # First order - Linear regression
+        # Second order - Dot product (Pairwise interaction)
+        return self.dropout((U * I_combined).sum(1) + b_u + b_i + self.mean)
