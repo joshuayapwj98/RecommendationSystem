@@ -36,8 +36,6 @@ class MF(nn.Module):
         # Second order - Dot product (Pairwise interaction)
         return self.dropout((U * I).sum(1) + b_u + b_i + self.mean)
     
-# TODO: Create new model class
-# Must have: __init__, forward functions
 class ExtendedMF(MF):
     def __init__(self, num_users, num_items, embedding_size=8, dropout=0, mean=0, category_dict = None, visual_dict = None):
         super(ExtendedMF, self).__init__(num_users, num_items, embedding_size, dropout, mean)
@@ -53,9 +51,22 @@ class ExtendedMF(MF):
         # Linear layer for visual features
         self.visual_linear = nn.Linear(512, embedding_size)
         
-        # Initialize weights
-        self.category_emb.weight.data.uniform_(0, 0.005)
-        self.visual_linear.weight.data.uniform_(0, 0.005)
+        # # Attempt 1: Initialize weights with uniform distribution
+        # self.category_emb.weight.data.uniform_(0, 0.005)
+        # self.visual_linear.weight.data.uniform_(0, 0.005)
+        
+        # Attempt 2: Initialize wieghts with xavier_uniform distribution
+        nn.init.xavier_uniform_(self.category_emb.weight)
+        nn.init.xavier_uniform_(self.visual_linear.weight)
+        
+        # Add a FFNN for feature interaction
+        self.feature_interaction = nn.Sequential(
+            nn.Linear(embedding_size * 3, embedding_size * 2),
+            nn.ReLU(),
+            nn.Linear(embedding_size * 2, embedding_size),
+            nn.ReLU(),
+            nn.Linear(embedding_size, embedding_size)
+        )
 
     def forward(self, u_id, i_id, category, visual):
         U = self.user_emb(u_id)
@@ -63,14 +74,26 @@ class ExtendedMF(MF):
         I = self.item_emb(i_id)
         b_i = self.item_bias(i_id).squeeze()
         
-        # Get category and visual features for the item
+        # Get category and visual features for the item, normalize them
         category_feature = self.category_emb(category.long())
-        visual_feature = self.visual_linear(visual.float())
-
-        # Combine item embedding with category and visual features
-        I_combined = I + category_feature + visual_feature
+        category_feature = (category_feature - category_feature.mean()) / category_feature.std()
         
+        visual_feature = self.visual_linear(visual.float())
+        visual_feature = (visual_feature - visual_feature.mean()) / visual_feature.std()
+
+        # Attempt 1: Combine item embedding with category and visual features with simple summation
+        # I_combined = I + category_feature + visual_feature
+        
+        # Attempt 2: Combine item embedding with category and visual features with FFNN
+        features = torch.cat([I, category_feature, visual_feature], dim=1)
+        I_combined = self.feature_interaction(features)
+        
+        # # Prediction score for the user-item pair
+        # return self.dropout((U * I_combined).sum(1) + b_u + b_i + self.mean)
+    
+        # Attempt 3: Encourage diversity by penalizing similarity between recommended items
         # Prediction score for the user-item pair
-        # First order - Linear regression
-        # Second order - Dot product (Pairwise interaction)
-        return self.dropout((U * I_combined).sum(1) + b_u + b_i + self.mean)
+        prediction = self.dropout((U * I_combined).sum(1) + b_u + b_i + self.mean)
+
+        diversity_penalty = torch.norm(I_combined - I_combined.mean(dim=0), p=2, dim=1).mean()
+        return prediction - diversity_penalty

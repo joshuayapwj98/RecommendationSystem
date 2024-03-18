@@ -41,7 +41,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=100,
                         help="training epoches")
     # Can change to "cuda" if you have GPU
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="cpu")
 
     parser.add_argument(
         "--top_k", default='[10, 20, 50, 100]', help="compute metrics@top_k")
