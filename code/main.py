@@ -41,7 +41,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=100,
                         help="training epoches")
     # Can change to "cuda" if you have GPU
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--device", type=str, default="cuda")
+    
+    parser.add_argument("--alpha", type=float, default=0.1, help="alpha for diversity loss")
 
     parser.add_argument(
         "--top_k", default='[10, 20, 50, 100]', help="compute metrics@top_k")
@@ -65,17 +67,16 @@ if __name__ == "__main__":
             
     # construct the train datasets & dataloader
     train_dataset = data_utils.MFData(train_data, item_num, train_dict, True, True if args.model == 'ExtendedMF' else False, category_dict, visual_dict)
-
-    # if args.model == 'ExtendedMF':
-    #     train_dataset.set_item_features(category_dict, visual_dict)
     
     train_loader = data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1)
     
     ########################### CREATE MODEL ##############################
     if args.model == 'MF':
+        print("Using MF model")
         model = model.MF(user_num, item_num, args.emb_size, args.dropout)
     elif args.model == 'ExtendedMF':
+        print("Using ExtendedMF model")
         model = model.ExtendedMF(user_num, item_num, args.emb_size, args.dropout, 0, category_dict, visual_dict)
     else:
         raise ValueError("Invalid model name: {}".format(args.model))
@@ -108,6 +109,12 @@ if __name__ == "__main__":
                 prediction = model(user, item, category, visual)
                 loss = loss_function(prediction, label)
 
+                diversity_loss = model.calculate_diversity_loss(user, item, prediction)
+
+                # Add the diversity loss to the total loss
+                # The weight of the diversity loss can be adjusted to control the trade-off between accuracy and diversity
+                loss = loss + args.alpha * diversity_loss
+                
                 loss.backward()
                 optimizer.step()
         else:                 
@@ -122,7 +129,7 @@ if __name__ == "__main__":
                 # Call forward function in model.py
                 prediction = model(user, item)
                 loss = loss_function(prediction, label)
-
+                
                 loss.backward()
                 optimizer.step()
 

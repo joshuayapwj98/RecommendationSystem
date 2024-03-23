@@ -48,10 +48,66 @@ def evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag
 			recommends[idx].extend(indices.tolist())
 	return recommends
 
+def catalog_coverage(recommends, item_num):
+    """
+    Calculate catalog coverage.
+
+    Args:
+        recommends (list): List of recommended items for each user.
+        item_num (int): Total number of items in the catalog.
+
+    Returns:
+        float: Catalog coverage.
+    """
+    recommended_items = set()
+    for user_recommendations in recommends:
+        for item_list in user_recommendations:
+            for item in item_list:
+                recommended_items.add(item)
+    coverage = len(recommended_items) / item_num
+    return coverage
+
+def average_similarity(recommends, item_embeddings):
+    """
+    Calculate the average pairwise cosine similarity between recommended items.
+
+    Args:
+        recommends (list): List of recommended items for each user.
+        item_embeddings (torch.Tensor): Embeddings of all items.
+
+    Returns:
+        float: Average pairwise cosine similarity.
+    """
+    similarities = []
+    for user_recommendations in recommends:
+        for item_list in user_recommendations:
+            # Convert indices to embeddings
+            embeddings = item_embeddings[item_list]
+            # Calculate pairwise cosine similarity
+            similarity_matrix = torch.matmul(embeddings, embeddings.t())
+            norms = torch.norm(embeddings, dim=1)
+            similarity_matrix /= torch.outer(norms, norms)
+            similarity_matrix = similarity_matrix.fill_diagonal_(0)
+            # Average similarity for the item list
+            average_similarity = similarity_matrix.sum() / (len(item_list) * (len(item_list) - 1))
+            similarities.append(average_similarity.item())
+    # Calculate the overall average similarity
+    if similarities:
+        return sum(similarities) / len(similarities)
+    else:
+        return 0.0
+    
 def metrics(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict):
 	RECALL, NDCG = [], []
 	recommends = evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict)
+	coverage = catalog_coverage(recommends, item_num)
 
+	# Get item embeddings for calculating similarity
+	item_embeddings = model.item_emb.weight
+
+	# Calculate average similarity
+	avg_similarity = average_similarity(recommends, item_embeddings)
+		
 	for idx in range(len(top_k)):
 		sumForRecall, sumForNDCG, user_length = 0, 0, 0
 		k=-1
@@ -81,17 +137,29 @@ def metrics(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag,
 		RECALL.append(round(sumForRecall/user_length, 4))
 		NDCG.append(round(sumForNDCG/user_length, 4))
 
-	return RECALL, NDCG
+	return RECALL, NDCG, coverage, avg_similarity
 
 def print_results(loss, valid_result, test_result):
     """output the evaluation results."""
     if loss is not None:
         print("[Train]: loss: {:.4f}".format(loss))
     if valid_result is not None: 
-        print("[Valid]: Recall: {} NDCG: {}".format(
-                            '-'.join([str(x) for x in valid_result[0]]), 
-                            '-'.join([str(x) for x in valid_result[1]])))
+        if len(valid_result) >= 4:
+            print("[Valid]: Recall: {} NDCG: {} Coverage: {:.4f} Avg. Similarity: {:.4f}".format(
+                                '-'.join([str(x) for x in valid_result[0]]), 
+                                '-'.join([str(x) for x in valid_result[1]]),
+                                valid_result[2], valid_result[3]))
+        else:
+            print("[Valid]: Recall: {} NDCG: {}".format(
+                                '-'.join([str(x) for x in valid_result[0]]), 
+                                '-'.join([str(x) for x in valid_result[1]])))
     if test_result is not None: 
-        print("[Test]: Recall: {} NDCG: {} ".format(
-                            '-'.join([str(x) for x in test_result[0]]), 
-                            '-'.join([str(x) for x in test_result[1]])))
+        if len(test_result) >= 4:
+            print("[Test]: Recall: {} NDCG: {} Coverage: {:.4f} Avg. Similarity: {:.4f}".format(
+                                '-'.join([str(x) for x in test_result[0]]), 
+                                '-'.join([str(x) for x in test_result[1]]),
+                                test_result[2], test_result[3]))
+        else:
+            print("[Test]: Recall: {} NDCG: {}".format(
+                                '-'.join([str(x) for x in test_result[0]]), 
+                                '-'.join([str(x) for x in test_result[1]])))

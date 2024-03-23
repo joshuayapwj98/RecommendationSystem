@@ -51,13 +51,13 @@ class ExtendedMF(MF):
         # Linear layer for visual features
         self.visual_linear = nn.Linear(512, embedding_size)
         
-        # # Attempt 1: Initialize weights with uniform distribution
-        # self.category_emb.weight.data.uniform_(0, 0.005)
-        # self.visual_linear.weight.data.uniform_(0, 0.005)
+        # Attempt 1: Initialize weights with uniform distribution
+        self.category_emb.weight.data.uniform_(0, 0.005)
+        self.visual_linear.weight.data.uniform_(0, 0.005)
         
-        # Attempt 2: Initialize wieghts with xavier_uniform distribution
-        nn.init.xavier_uniform_(self.category_emb.weight)
-        nn.init.xavier_uniform_(self.visual_linear.weight)
+        # # Attempt 2: Initialize wieghts with xavier_uniform distribution
+        # nn.init.xavier_uniform_(self.category_emb.weight)
+        # nn.init.xavier_uniform_(self.visual_linear.weight)
         
         # Add a FFNN for feature interaction
         self.feature_interaction = nn.Sequential(
@@ -67,7 +67,7 @@ class ExtendedMF(MF):
             nn.ReLU(),
             nn.Linear(embedding_size, embedding_size)
         )
-
+    
     def forward(self, u_id, i_id, category, visual):
         U = self.user_emb(u_id)
         b_u = self.user_bias(u_id).squeeze()
@@ -91,9 +91,35 @@ class ExtendedMF(MF):
         # # Prediction score for the user-item pair
         # return self.dropout((U * I_combined).sum(1) + b_u + b_i + self.mean)
     
-        # Attempt 3: Encourage diversity by penalizing similarity between recommended items
-        # Prediction score for the user-item pair
-        prediction = self.dropout((U * I_combined).sum(1) + b_u + b_i + self.mean)
+        # # Attempt 3: Encourage diversity by penalizing similarity between recommended items
+        # # Prediction score for the user-item pair
+        # prediction = self.dropout((U * I_combined).sum(1) + b_u + b_i + self.mean)
 
-        diversity_penalty = torch.norm(I_combined - I_combined.mean(dim=0), p=2, dim=1).mean()
-        return prediction - diversity_penalty
+        # diversity_penalty = torch.norm(I_combined - I_combined.mean(dim=0), p=2, dim=1).mean()
+        # return prediction - diversity_penalty
+
+        # Attempt 4: Encourage diversity by penalizing similarity between recommended items
+        return self.dropout((U * I_combined).sum(1) + b_u + b_i + self.mean)
+    
+    def calculate_diversity_loss(self, user, item, prediction):
+        unique_users = torch.unique(user)
+        diversity_loss = 0.0
+
+        for u in unique_users:
+            user_item_indices = item[user == u]
+            user_predictions = prediction[user == u]
+
+            item_embeddings = self.item_emb(user_item_indices)
+            prediction_products = torch.outer(user_predictions, user_predictions)
+
+            # Compute pairwise dot products of item embeddings
+            dot_products = item_embeddings @ item_embeddings.t()
+
+            # Compute diversity loss for this user
+            upper_triangle_indices = torch.triu_indices(len(user_item_indices), len(user_item_indices), offset=1)
+            user_diversity_loss = (dot_products[upper_triangle_indices] / prediction_products[upper_triangle_indices]).sum()
+
+            diversity_loss += user_diversity_loss
+
+        diversity_loss /= len(unique_users)  # Average over all users
+        return diversity_loss
