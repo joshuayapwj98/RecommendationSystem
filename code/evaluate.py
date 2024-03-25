@@ -48,6 +48,8 @@ def evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag
 			recommends[idx].extend(indices.tolist())
 	return recommends
 
+# TODO: implement another coverage for category instead of item
+# 
 def catalog_coverage(recommends, item_num):
     """
     Calculate catalog coverage.
@@ -100,6 +102,9 @@ def average_similarity(recommends, item_embeddings):
 def metrics(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict):
 	RECALL, NDCG = [], []
 	recommends = evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict)
+	# TODO: return a list of recommendation lists for each user
+	# [[1,2,4,6,4,3,10,21,26,55], [777,633,12,53,25,123,5,234,17,15]]
+	# Where each list represents the recommended item for each user
 	coverage = catalog_coverage(recommends, item_num)
 
 	# Get item embeddings for calculating similarity
@@ -163,3 +168,7 @@ def print_results(loss, valid_result, test_result):
             print("[Test]: Recall: {} NDCG: {}".format(
                                 '-'.join([str(x) for x in test_result[0]]), 
                                 '-'.join([str(x) for x in test_result[1]])))
+            
+            # TODO: Get the final recommendation list, calculate recall value and diversity from the test
+            # TODO: plot the f1 measure of the recall and diversity
+             

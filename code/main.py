@@ -64,7 +64,8 @@ if __name__ == "__main__":
         train_path, valid_path, test_path, category_path, visual_path)
 
     # OUTPUT: user_num: 506, item_num: 1674, category_num: 1674, visual_num: 1674
-            
+    # TODO: go through the item-category again and create a set to find out the number of unique categories
+    # TODO: add in a method (UI or CLI) to add in the test file 
     # construct the train datasets & dataloader
     train_dataset = data_utils.MFData(train_data, item_num, train_dict, True, True if args.model == 'ExtendedMF' else False, category_dict, visual_dict)
     
@@ -113,6 +114,10 @@ if __name__ == "__main__":
 
                 # Add the diversity loss to the total loss
                 # The weight of the diversity loss can be adjusted to control the trade-off between accuracy and diversity
+                # There are 3 scenarios:
+                # (1) args.alpha is high - prioritize diversity over accuracy 
+                # (2) args.alpha is low - prioritize accuracy over diversity
+                # (3) args.alpha is 0 - behave like a standard matrix factorization model
                 loss = loss + args.alpha * diversity_loss
                 
                 loss.backward()
@@ -148,7 +153,7 @@ if __name__ == "__main__":
             evaluate.print_results(None, valid_result, test_result)
             print('---'*18)
 
-            # use best recall@10 on validation set to select the best results
+            # use best recall@10 on validation set to select the best results Recall@10 = TP/(TP+FN) for the top 10 recommendations
             if valid_result[0][0] > best_recall:
                 best_epoch = epoch
                 best_recall = valid_result[0][0]
