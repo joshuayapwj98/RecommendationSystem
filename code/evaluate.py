@@ -3,9 +3,8 @@ import numpy as np
 import torch
 
 from model import ExtendedMF
+import json
 
-# TODO: design a metric to evaluate the model
-# Write a evalution for the diversity
 def evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict):
 	recommends = []
 	for i in range(len(top_k)):
@@ -46,11 +45,66 @@ def evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag
 		for idx in range(len(top_k)):
 			_, indices = torch.topk(predictions, int(top_k[idx]))
 			recommends[idx].extend(indices.tolist())
+
 	return recommends
 
-# TODO: implement another coverage for category instead of item
-# 
-def catalog_coverage(recommends, item_num):
+def calculate_ild(recommendations, category_dict, top_k):
+    """
+    Calculate Intra-List-Diversity (ILD) for each user based on item categories and the average ILD.
+    
+    Args:
+        recommendations (list): A list of lists of lists where each inner list contains the recommended item IDs for a user for a specific value of top_k.
+        category_dict (dict): A dictionary where keys are item IDs and values are the categories of the items.
+        top_k (list): A list of the number of top recommendations to consider.
+        
+    Returns:
+        list: A list of lists of ILD scores for each user for each value of top_k.
+        list: A list of the average ILD score for each value of top_k.
+    """
+    ild_scores = [[] for _ in range(len(top_k))]
+    avg_ild = [0 for _ in range(len(top_k))]
+    num_users = len(recommendations[0])
+    for idx, k in enumerate(top_k):
+        total_ild = 0
+        for user in range(num_users):
+            recommended_items = recommendations[idx][user]
+            categories = np.array([category_dict[item] for item in recommended_items])
+            category_matrix = np.repeat(categories, k).reshape(k, k)
+            ild = np.sum(category_matrix != category_matrix.T) / 2
+            ild /= (k * (k - 1) / 2)
+            ild_scores[idx].append(ild)
+            total_ild += ild
+        avg_ild[idx] = round(total_ild / num_users, 4)
+    return ild_scores, avg_ild
+
+def calculate_f1(ndcg_scores, ild_scores, top_k):
+    """
+    Calculate F1 measure (NDCG-ILD) for each user and the average F1.
+    
+    Args:
+        ndcg_scores (list): A list of lists of NDCG scores for each user for each value of top_k.
+        ild_scores (list): A list of lists of ILD scores for each user for each value of top_k.
+        top_k (list): A list of the number of top recommendations to consider.
+        
+    Returns:
+        list: A list of lists of F1 scores for each user for each value of top_k.
+        list: A list of the average F1 score for each value of top_k.
+    """
+    f1_scores = [[] for _ in range(len(top_k))]
+    avg_f1 = [0 for _ in range(len(top_k))]
+    num_users = len(ndcg_scores[0])
+    for idx, _ in enumerate(top_k):
+        total_f1 = 0
+        for user in range(num_users):
+            ndcg = ndcg_scores[idx][user]
+            ild = ild_scores[idx][user]
+            f1 = (2 * ndcg * ild) / (ndcg + ild) if (ndcg + ild) != 0 else 0
+            f1_scores[idx].append(f1)
+            total_f1 += f1
+        avg_f1[idx] = round(total_f1 / num_users, 4)
+    return f1_scores, avg_f1
+
+def item_coverage(recommends, item_num):
     """
     Calculate catalog coverage.
 
@@ -98,77 +152,102 @@ def average_similarity(recommends, item_embeddings):
         return sum(similarities) / len(similarities)
     else:
         return 0.0
+
+def calculate_category_coverage(recommendations, category_dict, category_set):
+    """
+    Calculate the category coverage of the recommendations.
+
+    Args:
+        recommendations (list): List of recommended items for each user.
+        category_set (set): Set of all category IDs.
+
+    Returns:
+        float: Category coverage.
+    """
+    recommended_categories = set()
+    for item_recommendations in recommendations:
+        category = category_dict[item_recommendations]
+        recommended_categories.add(category)
+    # Look at the coverage function again
+    coverage = (len(recommended_categories) / len(category_set)) * 100
+    return coverage
     
-def metrics(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict):
-	RECALL, NDCG = [], []
-	recommends = evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict)
-	# TODO: return a list of recommendation lists for each user
-	# [[1,2,4,6,4,3,10,21,26,55], [777,633,12,53,25,123,5,234,17,15]]
-	# Where each list represents the recommended item for each user
-	coverage = catalog_coverage(recommends, item_num)
+def metrics(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict, categories):
+    RECALL, AVG_NDCG, NDCG = [], [], [[] for _ in range(len(top_k))]
+    recommends = evaluate(args, model, top_k, train_dict, gt_dict, valid_dict, item_num, flag, category_dict, visual_dict)
 
-	# Get item embeddings for calculating similarity
-	item_embeddings = model.item_emb.weight
+    for idx in range(len(top_k)):
+        sumForRecall, sumForNDCG, user_length = 0, 0, 0
+        k=-1
+        for i in gt_dict.keys(): # for each user
+            k += 1
+            if len(gt_dict[i]) != 0:
+                userhit = 0
+                dcg = 0
+                idcg = 0
+                idcgCount = len(gt_dict[i])
+                ndcg = 0
 
-	# Calculate average similarity
-	avg_similarity = average_similarity(recommends, item_embeddings)
-		
-	for idx in range(len(top_k)):
-		sumForRecall, sumForNDCG, user_length = 0, 0, 0
-		k=-1
-		for i in gt_dict.keys(): # for each user
-			k += 1
-			if len(gt_dict[i]) != 0:
-				userhit = 0
-				dcg = 0
-				idcg = 0
-				idcgCount = len(gt_dict[i])
-				ndcg = 0
+                for index, thing in enumerate(recommends[idx][k]):
+                    if thing in gt_dict[i]:
+                        userhit += 1
+                        dcg += 1.0 / (np.log2(index+2))
+                    if idcgCount > 0:
+                        idcg += 1.0 / (np.log2(index+2))
+                        idcgCount -= 1
+                if (idcg != 0):
+                    ndcg += (dcg / idcg)
 
-				for index, thing in enumerate(recommends[idx][k]):
-					if thing in gt_dict[i]:
-						userhit += 1
-						dcg += 1.0 / (np.log2(index+2))
-					if idcgCount > 0:
-						idcg += 1.0 / (np.log2(index+2))
-						idcgCount -= 1
-				if (idcg != 0):
-					ndcg += (dcg / idcg)
+                sumForRecall += userhit / len(gt_dict[i])
+                sumForNDCG += ndcg
+                user_length += 1
+                NDCG[idx].append(ndcg)
 
-				sumForRecall += userhit / len(gt_dict[i])
-				sumForNDCG += ndcg
-				user_length += 1
+        RECALL.append(round(sumForRecall/user_length, 4))
+        AVG_NDCG.append(round(sumForNDCG/user_length, 4))
 
-		RECALL.append(round(sumForRecall/user_length, 4))
-		NDCG.append(round(sumForNDCG/user_length, 4))
+    ild_scores, avg_ild = calculate_ild(recommends, category_dict, top_k)
+    _, avg_f1 = calculate_f1(NDCG, ild_scores, top_k)
+    
+    return RECALL, AVG_NDCG, avg_ild, avg_f1, recommends
 
-	return RECALL, NDCG, coverage, avg_similarity
+def write_recommendations(recommends, category_dict, category_set, output_file):
+    """
+    Write the recommendations to a JSON file.
+
+    Args:
+        recommends (list): List of recommended items for each user.
+        output_file (str): Path to the output JSON file.
+    """
+    data = []
+    for user_id, item_recommendations in enumerate(recommends):
+        user_data = {
+            "user_id": user_id,
+            "recommendations": item_recommendations,
+            "category_coverage": calculate_category_coverage(item_recommendations, category_dict, category_set)
+        }
+        data.append(user_data)
+    
+    with open(output_file, 'w') as f:
+        json.dump(data, f)
 
 def print_results(loss, valid_result, test_result):
     """output the evaluation results."""
     if loss is not None:
         print("[Train]: loss: {:.4f}".format(loss))
     if valid_result is not None: 
-        if len(valid_result) >= 4:
-            print("[Valid]: Recall: {} NDCG: {} Coverage: {:.4f} Avg. Similarity: {:.4f}".format(
-                                '-'.join([str(x) for x in valid_result[0]]), 
-                                '-'.join([str(x) for x in valid_result[1]]),
-                                valid_result[2], valid_result[3]))
-        else:
-            print("[Valid]: Recall: {} NDCG: {}".format(
-                                '-'.join([str(x) for x in valid_result[0]]), 
-                                '-'.join([str(x) for x in valid_result[1]])))
+        print("[Valid]: Recall: {} NDCG: {} ILD: {} F1: {} ".format(
+                            '-'.join([str(x) for x in valid_result[0]]), 
+                            '-'.join([str(x) for x in valid_result[1]]),
+                            '-'.join([str(x) for x in valid_result[2]]),
+                            '-'.join([str(x) for x in valid_result[3]]),
+                            ))
     if test_result is not None: 
-        if len(test_result) >= 4:
-            print("[Test]: Recall: {} NDCG: {} Coverage: {:.4f} Avg. Similarity: {:.4f}".format(
-                                '-'.join([str(x) for x in test_result[0]]), 
-                                '-'.join([str(x) for x in test_result[1]]),
-                                test_result[2], test_result[3]))
-        else:
-            print("[Test]: Recall: {} NDCG: {}".format(
-                                '-'.join([str(x) for x in test_result[0]]), 
-                                '-'.join([str(x) for x in test_result[1]])))
-            
-            # TODO: Get the final recommendation list, calculate recall value and diversity from the test
-            # TODO: plot the f1 measure of the recall and diversity
+        print("[Test]: Recall: {} NDCG: {} ILD: {} F1: {} ".format(
+                            '-'.join([str(x) for x in test_result[0]]), 
+                            '-'.join([str(x) for x in test_result[1]]),
+                            '-'.join([str(x) for x in test_result[2]]),
+                            '-'.join([str(x) for x in test_result[3]]),
+                            ))
+             
              

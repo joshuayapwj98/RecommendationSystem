@@ -1,47 +1,38 @@
 import numpy as np
 import torch.utils.data as data
 
-# TODO: load additional categorical features here
-
-
 def load_all(train_path, valid_path, test_path, category_path=None, visual_path=None):
     """ We load all the three file here to save time in each epoch. """
     train_dict = np.load(train_path, allow_pickle=True).item()
     valid_dict = np.load(valid_path, allow_pickle=True).item()
     test_dict = np.load(test_path, allow_pickle=True).item()
-    
-    category_dict = visual_dict = None
-
-    if category_path is not None and visual_path is not None:
-        category_dict = np.load(category_path, allow_pickle=True).item()
-        visual_dict = np.load(visual_path, allow_pickle=True).item()
+    category_dict = np.load(category_path, allow_pickle=True).item()
+    visual_dict = np.load(visual_path, allow_pickle=True).item()
 
     user_num, item_num = 0, 0
     user_num = max(user_num, max(train_dict.keys()))
     user_num = max(user_num, max(valid_dict.keys()))
     user_num = max(user_num, max(test_dict.keys()))
-
+    
+    category_set = set()
+    for _, category in category_dict.items():
+        category_set.add(category)
+    
     train_data, valid_gt, test_gt = [], [], []
     for user, items in train_dict.items():
         item_num = max(item_num, max(items))
         for item in items:
             train_data.append([int(user), int(item)])
-            # if category_dict is not None and visual_dict is not None:
-            #     train_data[-1].extend([category_dict[item], visual_dict[item]])
     for user, items in valid_dict.items():
         item_num = max(item_num, max(items))
         for item in items:
             valid_gt.append([int(user), int(item)])
-            # if category_dict is not None and visual_dict is not None:
-            #     valid_gt[-1].extend([category_dict[item], visual_dict[item]])
     for user, items in test_dict.items():
         item_num = max(item_num, max(items))
         for item in items:
-            test_gt.append([int(user), int(item)])
-            # if category_dict is not None and visual_dict is not None:
-            #     test_gt[-1].extend([category_dict[item], visual_dict[item]])
+            test_gt.append([int(user), int(item)])  
 
-    return user_num+1, item_num+1, train_dict, valid_dict, test_dict, category_dict, visual_dict, train_data, valid_gt, test_gt
+    return user_num+1, item_num+1, train_dict, valid_dict, test_dict, category_dict, visual_dict, train_data, valid_gt, test_gt, category_set
 
 
 class MFData(data.Dataset):
@@ -81,7 +72,6 @@ class MFData(data.Dataset):
         """
         return (1 + 1) * len(self.labels)
 
-    # TODO: return additional categorical features here [DONE]
     def __getitem__(self, idx):
         """ Override the __getitem__ method
         """
